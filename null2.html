@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guess the Smell: XR Cabin</title>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo:wght@500;800&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;background:#1d1f21;overflow:hidden;font-family:"Archivo",system-ui,sans-serif}
+  canvas{display:block}
+  #ui{
+    position:fixed;top:14px;left:14px;width:min(360px,calc(100vw - 28px));max-height:calc(100vh - 28px);overflow:auto;
+    background:rgba(20,21,23,.93);color:#eee;border:3px solid #e8ff2e;border-radius:12px;padding:16px;z-index:5
+  }
+  #ui h1{font-family:"Anton",sans-serif;font-weight:400;font-size:30px;margin:0;line-height:1;text-transform:uppercase;color:#fff}
+  #ui h1 span{color:#ff6a13}
+  #ui p{font-size:13.5px;line-height:1.45;color:#bbb;margin:8px 0}
+  .xrbtn{display:block;width:100%;margin:8px 0;border:0;border-radius:8px;padding:13px;font:800 16px "Archivo";cursor:pointer}
+  #btnAR{background:#e8ff2e;color:#111}
+  #btnVR{background:#ff6a13;color:#fff}
+  .xrbtn:disabled{opacity:.35;cursor:not-allowed}
+  #xrStatus{font-size:12.5px;color:#ffb38a}
+  .lads{margin-top:12px;border-top:1px solid #333;padding-top:10px}
+  .lads h2{font:800 12px "Archivo";letter-spacing:.14em;text-transform:uppercase;color:#e8ff2e;margin:0 0 8px}
+  .lad{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;font-size:14px}
+  .lad small{display:block;color:#888;font-size:11.5px}
+  .lad label{font:800 12px "Archivo";background:#3a3d41;color:#fff;padding:7px 10px;border-radius:6px;cursor:pointer;white-space:nowrap}
+  .lad label:hover{background:#e8ff2e;color:#111}
+  .lad input{display:none}
+  .lad .ok{color:#5fd068}
+  #hide{position:absolute;top:8px;right:10px;background:none;border:0;color:#999;font-size:20px;cursor:pointer}
+  #show{position:fixed;top:14px;left:14px;z-index:5;display:none;border:0;border-radius:8px;padding:10px 14px;font:800 14px "Archivo";background:#e8ff2e;cursor:pointer}
+  #tip{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);color:#aaa;font-size:13px;background:rgba(0,0,0,.5);padding:8px 14px;border-radius:999px;z-index:4;text-align:center}
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="ui">
+  <button id="hide" aria-label="Hide panel">×</button>
+  <h1>Guess the <span>Smell</span><br>XR Cabin</h1>
+  <p>The Plot 14 lads, life-size, in your room. Point or pinch at a lad to hear him, at his <b>boots</b> for a sniff, and use the floating panel to play <b>Guess the Smell</b>.</p>
+  <button class="xrbtn" id="btnAR" disabled>🥽 Enter Mixed Reality (passthrough)</button>
+  <button class="xrbtn" id="btnVR" disabled>🏗️ Enter VR Site Cabin</button>
+  <div id="xrStatus">Checking for a headset…</div>
+  <div class="lads">
+    <h2>Swap in your 3D models (.glb)</h2>
+    <div id="ladList"></div>
+    <p>Or put files named <code>gaz.glb</code>, <code>big-dave.glb</code>, <code>kev.glb</code>, <code>tommo.glb</code>, <code>old-ron.glb</code> in the <code>models/</code> folder and they load automatically. Models are scaled to each lad's height and stood on the floor. A rigged model's first animation plays on loop.</p>
+  </div>
+</div>
+<button id="show">☰ Cabin menu</button>
+<div id="tip">Drag to look around · click a lad to hear him · click his boots for a sniff</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
+
+/* ===================================================================
+   THE LADS
+   =================================================================== */
+const LADS = [
+  { id:'kev', name:'Kev', h:1.75, w:0.92, vest:'#e8ff2e', shirt:'#3b4a5c', trousers:'#2b2f36', hat:'#2f6fd6', stink:4, voice:{rate:1.15,pitch:1.15}, tts:{voice:'airy',rate:1.15},
+    extra:'boa', anims:null,
+    lines:["It's natural, lads. My body is cleansing itself.","Lentils and conviction, Dave. Lentils and conviction.","Steel toe caps trap heat. My toes are in a slow cooker eight hours a day.","These boots are fart-adjacent. The only boots on site that can do both."],
+    boot:"Second-hand off a fella in the pub. Could've been three men in these.",
+    fart:"Lentils! I TOLD you about the second wrap!" },
+  { id:'tommo', name:'Tommo', h:1.76, w:1.0, vest:null, shirt:'#1f5fa8', trousers:'#3a3a3a', hat:'#c8282e', stink:4, voice:{rate:1.05,pitch:1.05}, tts:{voice:'glassy',rate:1.05},
+    extra:'wrench', anims:{idle:'Stand_and_Chat',talk:'Stand_and_Chat',boot:'CrouchLookAroundBow',cheer:'Cheer_with_Both_Hands',dance:'FunnyDancing_01'},
+    lines:["Five pairs of socks. Washed Friday. Saturday, inside out, whole week again. That's the System.","There was a spider in one last month. Dead. Little legs up.","Cheesy front end, leathery middle, and a finish of wet Labrador.","I've got a disciple, lads. Jonno. The System is spreading."],
+    boot:"Inside-out week, that. Day six.",
+    fart:"Custard creams. Every single time." },
+  { id:'gaz', name:'Gaz', h:1.78, w:1.0, vest:'#e8ff2e', shirt:'#d9d9d9', trousers:'#1f2a44', hat:'#ffd400', stink:3, voice:{rate:1.12,pitch:1.0}, tts:{voice:'buttery',rate:1.12},
+    extra:null, anims:{idle:'Idle_11',talk:null,boot:'Angry_Ground_Stomp_2',cheer:'air_squat',dance:'All_Night_Dance'},
+    lines:["Ladies and gentlemen. Well, lads. Welcome to GUESS! THE! SMELL!","It's not shuffling, Dave. It's ventilation. Every heel kick, the boot breathes out.","Three weddings in these. Nobody said anything. They did sit me near the door.","My dog won't go near them. My dog eats its own sick."],
+    boot:"Guilty. Wedding boot. That one's been in a koi pond.",
+    fart:"Some of that was me, lads. Teamwork." },
+  { id:'big-dave', name:'Big Dave', h:1.96, w:1.32, vest:'#ff8a1e', shirt:'#55595e', trousers:'#4d4f52', hat:'#f2f2f2', stink:5, voice:{rate:0.88,pitch:0.75}, tts:{voice:'rounded',rate:0.88},
+    extra:null, wide:1.12, anims:{idle:'Stand_and_Chat',talk:'Stand_and_Chat',boot:'Victory_Fist_Pump',cheer:'happy_jump_m',dance:'Gangnam_Groove'},
+    lines:["You don't wear size thirteens. You pilot them.","The left one's got a hole in. My foot's been wet since August.","I've never taken the insoles out. I think they've become part of me.","We don't talk about Rex."],
+    boot:"Left one. Fresh off the radiator. She's ready.",
+    fart:"I want it noted I'm not happy about it either." },
+  { id:'old-ron', name:'Old Ron', h:1.70, w:1.05, vest:null, shirt:'#6b5640', trousers:'#3d3a33', hat:null, cap:'#77736a', stink:5, voice:{rate:0.8,pitch:0.8}, tts:{voice:'rounded',rate:0.78},
+    extra:'tash', anims:{idle:'Idle_4',talk:'Alert',boot:'Female_Bend_Over_Pick_Up_Inspect',cheer:'ymca_dance',dance:'ymca_dance'},
+    lines:["Forty-one years, son. It's not a gift. It's a wound.","These boots are twenty-six years old. Never washed. Not once.","Never trust a clean boot, Gary.","Government certified, son. Interior emissions. Beat that."],
+    boot:"Twenty-six years in the making, son.",
+    fart:"At my age it just happens, son." }
+];
+
+/* ===================================================================
+   RENDERER / SCENE
+   =================================================================== */
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType('local-floor');
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const BG = new THREE.Color('#2a2622');
+scene.background = BG;
+
+const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.05, 60);
+camera.position.set(0, 1.6, 1.4);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1.15, -2.0);
+controls.maxPolarAngle = Math.PI*0.52;
+controls.minDistance = 0.8; controls.maxDistance = 7;
+controls.update();
+
+scene.add(new THREE.HemisphereLight('#fff6e0', '#3a3530', 1.2));
+const sun = new THREE.DirectionalLight('#ffffff', 1.6);
+sun.position.set(1.5, 4, 1.5);
+sun.target.position.set(0,0,-2.2);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024,1024);
+Object.assign(sun.shadow.camera, {left:-4,right:4,top:4,bottom:-2,near:0.5,far:12});
+scene.add(sun, sun.target);
+
+/* ---------- canvas texture helpers ---------- */
+function canvasTex(w,h,draw){
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const g=c.getContext('2d'); draw(g,w,h);
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; t.anisotropy=4;
+  t.userData={canvas:c,ctx:g}; return t;
+}
+function wrapText(g,text,x,y,maxW,lh){
+  const words=text.split(' '); let line=''; let lines=[];
+  for(const w of words){ const t=line?line+' '+w:w; if(g.measureText(t).width>maxW && line){ lines.push(line); line=w; } else line=t; }
+  if(line) lines.push(line);
+  lines.forEach((l,i)=>g.fillText(l,x,y+i*lh)); return lines.length;
+}
+function roundRect(g,x,y,w,h,r){ g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r); g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); }
+
+const vestTexCache={};
+function vestTex(color){
+  if(vestTexCache[color]) return vestTexCache[color];
+  return vestTexCache[color]=canvasTex(256,256,(g,w,h)=>{
+    g.fillStyle=color; g.fillRect(0,0,w,h);
+    g.fillStyle='#c9cdd2'; g.fillRect(0,h*0.48,w,h*0.1); g.fillRect(0,h*0.74,w,h*0.1);
+    g.fillRect(w*0.2,0,w*0.1,h*0.48); g.fillRect(w*0.7,0,w*0.1,h*0.48);
+    // grime
+    for(let i=0;i<40;i++){ g.fillStyle=`rgba(80,60,30,${Math.random()*0.12})`; g.beginPath(); g.arc(Math.random()*w,Math.random()*h,4+Math.random()*16,0,7); g.fill(); }
+  });
+}
+
+/* ===================================================================
+   CABIN (VR mode) + floor shadows (MR mode)
+   =================================================================== */
+const cabin = new THREE.Group(); scene.add(cabin);
+{
+  const floorTex = canvasTex(512,512,(g,w,h)=>{ g.fillStyle='#6d5a43'; g.fillRect(0,0,w,h);
+    for(let i=0;i<8;i++){ g.fillStyle=i%2?'#66533d':'#735f47'; g.fillRect(0,i*h/8,w,h/8-3); }
+    for(let i=0;i<300;i++){ g.fillStyle=`rgba(30,20,10,${Math.random()*0.15})`; g.fillRect(Math.random()*w,Math.random()*h,Math.random()*40,2); } });
+  floorTex.wrapS=floorTex.wrapT=THREE.RepeatWrapping; floorTex.repeat.set(3,3);
+  const floor=new THREE.Mesh(new THREE.PlaneGeometry(7,7), new THREE.MeshStandardMaterial({map:floorTex,roughness:.95}));
+  floor.rotation.x=-Math.PI/2; floor.position.z=-1.6; floor.receiveShadow=true; cabin.add(floor);
+
+  const wallMat=new THREE.MeshStandardMaterial({color:'#c8c2b4',roughness:.9,side:THREE.BackSide});
+  const room=new THREE.Mesh(new THREE.BoxGeometry(7,2.7,7), wallMat); room.position.set(0,1.35,-1.6); cabin.add(room);
+  // window with rain-grey sky
+  const win=new THREE.Mesh(new THREE.PlaneGeometry(1.6,0.9), new THREE.MeshBasicMaterial({color:'#9fb3c2'}));
+  win.position.set(-1.6,1.6,-5.09); cabin.add(win);
+  const frame=new THREE.Mesh(new THREE.BoxGeometry(1.7,1.0,0.04), new THREE.MeshStandardMaterial({color:'#eeeeee'}));
+  frame.position.set(-1.6,1.6,-5.12); cabin.add(frame);
+  // H&S poster with moustache
+  const poster=new THREE.Mesh(new THREE.PlaneGeometry(0.6,0.85), new THREE.MeshStandardMaterial({map:canvasTex(300,425,(g,w,h)=>{
+    g.fillStyle='#fff'; g.fillRect(0,0,w,h); g.fillStyle='#1b7a3a'; g.fillRect(0,0,w,70);
+    g.fillStyle='#fff'; g.font='bold 30px Archivo, sans-serif'; g.fillText('SAFETY FIRST',28,47);
+    g.fillStyle='#ffd400'; g.beginPath(); g.arc(150,190,70,Math.PI,0); g.fill(); g.fillRect(70,185,160,12);
+    g.fillStyle='#f1c9a5'; g.beginPath(); g.arc(150,240,55,0,7); g.fill();
+    g.strokeStyle='#111'; g.lineWidth=7; g.beginPath(); g.moveTo(110,262); g.quadraticCurveTo(150,240,190,262); g.stroke(); // moustache
+    g.fillStyle='#111'; g.font='bold 24px Archivo, sans-serif'; g.fillText('WEAR YOUR PPE',62,345); g.font='18px Archivo'; g.fillText('Wash your boots.*',85,380); g.font='12px Archivo'; g.fillText('*nobody does',110,405);
+  })}));
+  poster.position.set(1.2,1.6,-5.08); cabin.add(poster);
+  // shelf + golden traffic cone + kettle
+  const shelf=new THREE.Mesh(new THREE.BoxGeometry(1.4,0.05,0.35), new THREE.MeshStandardMaterial({color:'#8a6a45'}));
+  shelf.position.set(3.32,1.45,-2.2); shelf.rotation.y=Math.PI/2; shelf.castShadow=true; cabin.add(shelf);
+  const cone=new THREE.Mesh(new THREE.ConeGeometry(0.16,0.5,24), new THREE.MeshStandardMaterial({color:'#ff6a13',roughness:.5}));
+  cone.position.set(3.3,1.73,-2.5); cabin.add(cone);
+  const band=new THREE.Mesh(new THREE.CylinderGeometry(0.105,0.125,0.07,24), new THREE.MeshStandardMaterial({color:'#e6b422',metalness:.9,roughness:.25}));
+  band.position.set(3.3,1.74,-2.5); cabin.add(band);
+  const kettle=new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.11,0.24,20), new THREE.MeshStandardMaterial({color:'#dddddd',metalness:.6,roughness:.3}));
+  kettle.position.set(3.3,1.6,-1.8); cabin.add(kettle);
+  // paint tub (Gaz's stage)
+  const tub=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.16,0.32,24), new THREE.MeshStandardMaterial({color:'#f4f4f4'}));
+  tub.position.set(-0.9,0.16,-1.2); tub.castShadow=true; cabin.add(tub);
+  const light=new THREE.Mesh(new THREE.BoxGeometry(1.2,0.04,0.15), new THREE.MeshBasicMaterial({color:'#ffffff'}));
+  light.position.set(0,2.68,-2); cabin.add(light);
+}
+// passthrough shadow catcher
+const shadowCatcher=new THREE.Mesh(new THREE.PlaneGeometry(8,8), new THREE.ShadowMaterial({opacity:.35}));
+shadowCatcher.rotation.x=-Math.PI/2; shadowCatcher.position.z=-2; shadowCatcher.receiveShadow=true; shadowCatcher.visible=false;
+scene.add(shadowCatcher);
+
+/* ===================================================================
+   PLACEHOLDER TRADIE BUILDER
+   =================================================================== */
+const skin=new THREE.MeshStandardMaterial({color:'#e2b28f',roughness:.8});
+const bootMat=new THREE.MeshStandardMaterial({color:'#3a2c1f',roughness:.95});
+function std(c,r=.85){ return new THREE.MeshStandardMaterial({color:c,roughness:r}); }
+function part(geo,mat,x,y,z,parent){ const m=new THREE.Mesh(geo,mat); m.position.set(x,y,z); m.castShadow=true; parent.add(m); return m; }
+
+function buildPlaceholder(L){
+  const g=new THREE.Group(); const s=L.h/1.78; const w=L.w;
+  // boots
+  [-1,1].forEach(side=>{
+    const b=part(new THREE.BoxGeometry(0.13*w,0.13,0.3), bootMat, side*0.11*w, 0.065, 0.04, g);
+    part(new THREE.CylinderGeometry(0.065*w,0.07*w,0.12,12), bootMat, side*0.11*w, 0.17, 0, g);
+  });
+  // legs
+  const legMat=std(L.trousers);
+  [-1,1].forEach(side=> part(new THREE.CapsuleGeometry(0.075*w, 0.62*s, 4, 10), legMat, side*0.11*w, 0.24+0.42*s, 0, g));
+  // torso
+  const torsoY=0.24+0.84*s+0.28*s;
+  part(new THREE.CapsuleGeometry(0.19*w, 0.34*s, 6, 14), std(L.shirt), 0, torsoY, 0, g).scale.set(1,1,0.68);
+  if(L.vest){
+    const v=part(new THREE.CylinderGeometry(0.205*w,0.2*w,0.46*s,18,1,true), new THREE.MeshStandardMaterial({map:vestTex(L.vest),roughness:.7,side:THREE.DoubleSide}), 0, torsoY-0.02, 0, g);
+    v.scale.set(1,1,0.72);
+  }
+  // arms
+  const armMat=std(L.shirt);
+  [-1,1].forEach(side=>{
+    const a=part(new THREE.CapsuleGeometry(0.06*w, 0.5*s, 4, 10), armMat, side*0.26*w, torsoY-0.08, 0, g);
+    a.rotation.z=side*0.12;
+    part(new THREE.SphereGeometry(0.055,12,10), skin, side*0.29*w, torsoY-0.42*s, 0, g);
+  });
+  // neck + head
+  part(new THREE.CylinderGeometry(0.06,0.07,0.08,12), skin, 0, torsoY+0.3*s, 0, g);
+  const headY=torsoY+0.44*s;
+  part(new THREE.SphereGeometry(0.115,20,16), skin, 0, headY, 0, g).scale.set(1,1.12,1.02);
+  // eyes
+  const eye=std('#1a1a1a',.4);
+  [-1,1].forEach(side=> part(new THREE.SphereGeometry(0.014,8,8), eye, side*0.04, headY+0.02, 0.105, g));
+  // hard hat / flat cap
+  if(L.hat){
+    const hat=part(new THREE.SphereGeometry(0.13,20,12,0,Math.PI*2,0,Math.PI/2), std(L.hat,.4), 0, headY+0.05, 0, g);
+    part(new THREE.CylinderGeometry(0.16,0.16,0.012,24), std(L.hat,.4), 0, headY+0.05, 0.02, g);
+  }
+  if(L.cap){
+    part(new THREE.CylinderGeometry(0.125,0.13,0.06,20), std(L.cap), 0, headY+0.1, 0, g).scale.set(1,1,1.05);
+    part(new THREE.BoxGeometry(0.17,0.012,0.09), std(L.cap), 0, headY+0.08, 0.12, g);
+  }
+  if(L.extra==='tash') part(new THREE.BoxGeometry(0.09,0.02,0.02), std('#bdb8ad'), 0, headY-0.04, 0.11, g);
+  if(L.extra==='boa'){
+    const boa=part(new THREE.TorusGeometry(0.14,0.025,8,24), std('#ff6a13',.5), 0, torsoY+0.22*s, 0.02, g);
+    boa.rotation.x=Math.PI/2.3;
+    part(new THREE.BoxGeometry(0.16,0.04,0.03), std('#222',.3), 0, headY+0.115, 0.08, g); // goggles on hat
+  }
+  if(L.extra==='wrench'){
+    const wr=part(new THREE.BoxGeometry(0.03,0.32,0.03), std('#9aa0a6',.3), 0.3*w, torsoY-0.5*s, 0.06, g);
+    wr.rotation.z=0.25;
+  }
+  return g;
+}
+
+/* ===================================================================
+   SPEECH BUBBLES, NAME TAGS, STINK CLOUDS
+   =================================================================== */
+function makeBubble(){
+  const tex=canvasTex(1024,440,()=>{});
+  const mesh=new THREE.Mesh(new THREE.PlaneGeometry(1.15,0.495), new THREE.MeshBasicMaterial({map:tex,transparent:true,depthWrite:false}));
+  mesh.visible=false; mesh.renderOrder=10; mesh.userData.tex=tex; return mesh;
+}
+function drawBubble(mesh,who,text){
+  const {canvas:c,ctx:g}=mesh.userData.tex.userData; const w=c.width,h=c.height;
+  g.clearRect(0,0,w,h);
+  g.fillStyle='rgba(17,17,17,.94)'; roundRect(g,8,8,w-16,h-70,36); g.fill();
+  g.lineWidth=8; g.strokeStyle='#e8ff2e'; g.stroke();
+  g.beginPath(); g.moveTo(w/2-40,h-64); g.lineTo(w/2,h-6); g.lineTo(w/2+40,h-64); g.closePath(); g.fillStyle='rgba(17,17,17,.94)'; g.fill();
+  g.fillStyle='#e8ff2e'; g.font='800 46px Archivo, sans-serif'; g.fillText(who.toUpperCase(),48,74);
+  g.fillStyle='#fff'; g.font='500 44px Archivo, sans-serif'; wrapText(g,text,48,138,w-96,54);
+  mesh.userData.tex.needsUpdate=true;
+}
+function nameTag(name){
+  const tex=canvasTex(512,128,(g,w,h)=>{ g.fillStyle='#e8ff2e'; roundRect(g,4,4,w-8,h-8,30); g.fill();
+    g.fillStyle='#111'; g.font='800 64px Archivo, sans-serif'; g.textAlign='center'; g.fillText(name.toUpperCase(),w/2,88); });
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,depthWrite:false})); sp.scale.set(0.42,0.105,1); return sp;
+}
+const puffTex=canvasTex(64,64,(g,w,h)=>{ const r=g.createRadialGradient(32,32,2,32,32,30); r.addColorStop(0,'rgba(255,255,255,1)'); r.addColorStop(1,'rgba(255,255,255,0)'); g.fillStyle=r; g.fillRect(0,0,64,64); });
+function makeStink(count=70,spread=0.25){
+  const geo=new THREE.BufferGeometry(); const pos=new Float32Array(count*3); const life=new Float32Array(count);
+  for(let i=0;i<count;i++){ life[i]=Math.random()*3; pos[i*3+1]=-10; }
+  geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  const mat=new THREE.PointsMaterial({map:puffTex,color:'#8fd14f',size:0.11,transparent:true,opacity:0.28,depthWrite:false,sizeAttenuation:true});
+  const p=new THREE.Points(geo,mat); p.userData={life,count,spread,rate:0.4,burst:0}; p.frustumCulled=false; return p;
+}
+function updateStink(p,dt,originY=0.15){
+  const u=p.userData, pos=p.geometry.attributes.position.array;
+  const active = u.burst>0 ? 1 : u.rate;
+  for(let i=0;i<u.count;i++){
+    u.life[i]-=dt;
+    if(u.life[i]<=0){
+      if(Math.random()<active){ u.life[i]=2+Math.random()*1.5;
+        pos[i*3]=(Math.random()-.5)*u.spread; pos[i*3+1]=originY+Math.random()*0.1; pos[i*3+2]=(Math.random()-.5)*u.spread; }
+      else { u.life[i]=Math.random()*0.5; pos[i*3+1]=-10; }
+    } else if(pos[i*3+1]>-5){
+      pos[i*3+1]+=dt*(0.18+(u.burst>0?0.35:0)); pos[i*3]+=Math.sin(u.life[i]*3+i)*dt*0.05; pos[i*3+2]+=Math.cos(u.life[i]*2+i)*dt*0.05;
+    }
+  }
+  if(u.burst>0){ u.burst-=dt; p.material.opacity=0.55; p.material.size=0.16; } else { p.material.opacity=0.12+u.rate*0.25; p.material.size=0.11; }
+  p.geometry.attributes.position.needsUpdate=true;
+}
+
+/* ===================================================================
+   PLACE THE LADS
+   =================================================================== */
+const hitTargets=[]; const ladObjs={};
+const R=2.3, angles=[-40,-20,0,20,40];
+LADS.forEach((L,i)=>{
+  const a=THREE.MathUtils.degToRad(angles[i]);
+  const root=new THREE.Group(); root.position.set(Math.sin(a)*R, 0, -Math.cos(a)*R);
+  root.rotation.y=Math.atan2(-root.position.x,-root.position.z);
+  scene.add(root);
+  const body=buildPlaceholder(L); root.add(body);
+  const ring=new THREE.Mesh(new THREE.RingGeometry(0.34*L.w,0.4*L.w,40), new THREE.MeshBasicMaterial({color:'#e8ff2e',transparent:true,opacity:0.0,depthWrite:false}));
+  ring.rotation.x=-Math.PI/2; ring.position.y=0.005; root.add(ring);
+  const tag=nameTag(L.name); tag.position.y=L.h+0.24; root.add(tag);
+  const bubble=makeBubble(); bubble.position.y=L.h+0.5; root.add(bubble);
+  const stink=makeStink(); stink.userData.rate=0.15+L.stink*0.12; root.add(stink);
+  // invisible hit proxy (stays when a GLB replaces the placeholder)
+  const proxy=new THREE.Mesh(new THREE.CylinderGeometry(0.3*L.w,0.3*L.w,L.h,12), new THREE.MeshBasicMaterial({visible:false}));
+  proxy.position.y=L.h/2; proxy.userData={kind:'lad',id:L.id}; root.add(proxy); hitTargets.push(proxy);
+  ladObjs[L.id]={L,root,body,ring,tag,bubble,stink,bubbleT:0,lineIdx:0,hover:0,mixer:null,glb:null};
+});
+
+/* ===================================================================
+   GLB LOADING (swap placeholder for the user's models)
+   =================================================================== */
+const loader=new GLTFLoader();
+function fitModel(obj,L){
+  obj.updateMatrixWorld(true);
+  const box=new THREE.Box3().setFromObject(obj); const size=box.getSize(new THREE.Vector3());
+  const k=L.h/(size.y||1); obj.scale.multiplyScalar(k); if(L.wide){ obj.scale.x*=L.wide; obj.scale.z*=L.wide; }
+  obj.updateMatrixWorld(true);
+  const b2=new THREE.Box3().setFromObject(obj); const c=b2.getCenter(new THREE.Vector3());
+  obj.position.x-=c.x; obj.position.z-=c.z; obj.position.y-=b2.min.y;
+  obj.traverse(o=>{ if(o.isMesh){ o.castShadow=true; o.receiveShadow=true; } });
+}
+function loadGLB(id,url,label){
+  const O=ladObjs[id];
+  return new Promise((res,rej)=>loader.load(url,gltf=>{
+    if(O.glb){ O.root.remove(O.glb); }
+    const m=gltf.scene; fitModel(m,O.L); O.root.add(m); O.glb=m; O.body.visible=false;
+    if(gltf.animations && gltf.animations.length){
+      O.mixer=new THREE.AnimationMixer(m); O.clips={};
+      gltf.animations.forEach(c=>{ pinRoot(c); O.clips[c.name]=c; });
+      O.mixer.addEventListener('finished',()=>{ if(O.oneShot){ O.oneShot=false; playAnim(O,'idle',false); } });
+      O.cur=null; playAnim(O,'idle',false);
+      if(!O.cur) { const a=O.mixer.clipAction(gltf.animations[0]); a.play(); O.cur=a; }
+    }
+    const st=document.querySelector(`[data-status="${id}"]`); if(st){ st.textContent='✓ '+label; st.className='ok'; }
+    res();
+  },undefined,rej));
+}
+// keep animations on the spot: lock the hips' horizontal travel to its first frame
+function pinRoot(clip){
+  clip.tracks.forEach(tr=>{
+    if(/hips\.position$/i.test(tr.name)){
+      const v=tr.values, x0=v[0], z0=v[2];
+      for(let i=0;i<v.length;i+=3){ v[i]=x0; v[i+2]=z0; }
+    }
+  });
+}
+function playAnim(O,role,once=true,secs=0){
+  if(!O.mixer||!O.L.anims) return;
+  const name=O.L.anims[role]; const clip=name&&O.clips[name]; if(!clip) return;
+  const next=O.mixer.clipAction(clip);
+  if(O.cur===next && !once) return;
+  next.reset(); next.enabled=true; next.setEffectiveWeight(1);
+  next.setLoop(once?THREE.LoopOnce:THREE.LoopRepeat, Infinity); next.clampWhenFinished=once;
+  if(O.cur) next.crossFadeFrom(O.cur,0.35,false);
+  next.play(); O.cur=next; O.oneShot=once;
+  clearTimeout(O.animTimer);
+  if(secs) O.animTimer=setTimeout(()=>{ O.oneShot=false; playAnim(O,'idle',false); },secs*1000);
+}
+// auto-load models/<id>.glb if present; otherwise try a packed models/<id>.glb.js (for hosts that won't serve .glb)
+function loadPacked(id){
+  return new Promise((res,rej)=>{ const sc=document.createElement('script'); sc.src=`models/${id}.glb.js`;
+    sc.onload=()=>{ const b64=(window.__GLB||{})[id]; if(!b64) return rej();
+      const bin=Uint8Array.from(atob(b64),c=>c.charCodeAt(0)); delete window.__GLB[id];
+      const url=URL.createObjectURL(new Blob([bin],{type:'model/gltf-binary'})); loadGLB(id,url,id+'.glb').then(res,rej); };
+    sc.onerror=rej; document.head.appendChild(sc); });
+}
+LADS.forEach(L=>{
+  const url=`models/${L.id}.glb`;
+  fetch(url,{method:'HEAD'}).then(r=>{
+    if(r.ok && !/text\/html/.test(r.headers.get('content-type')||'')) return loadGLB(L.id,url,L.id+'.glb');
+    throw 0;
+  }).catch(()=>loadPacked(L.id).catch(()=>{}));
+});
+// file pickers
+const list=document.getElementById('ladList');
+LADS.forEach(L=>{
+  const row=document.createElement('div'); row.className='lad';
+  row.innerHTML=`<div>${L.name}<small data-status="${L.id}">stand-in figure</small></div><label>Load GLB<input type="file" accept=".glb,.gltf,model/gltf-binary"></label>`;
+  row.querySelector('input').addEventListener('change',e=>{
+    const f=e.target.files[0]; if(!f) return;
+    const st=row.querySelector('small'); st.textContent='loading…';
+    loadGLB(L.id,URL.createObjectURL(f),f.name).catch(()=>{ st.textContent='couldn\'t read that file'; });
+  });
+  list.appendChild(row);
+});
+
+/* ===================================================================
+   FLOATING GAME PANEL: Guess the Smell
+   =================================================================== */
+const panel=new THREE.Group(); panel.position.set(-0.85,1.05,-0.7); panel.lookAt(0,1.45,0.1); scene.add(panel);
+const panelBoard=new THREE.Mesh(new THREE.PlaneGeometry(0.72,0.5), new THREE.MeshBasicMaterial({map:canvasTex(720,500,()=>{}),transparent:true}));
+panel.add(panelBoard);
+let score=0, rounds=0, roundState=null; // {answer, culprit}
+function drawPanel(msg){
+  const t=panelBoard.material.map, {canvas:c,ctx:g}=t.userData; const w=c.width,h=c.height;
+  g.clearRect(0,0,w,h); g.fillStyle='rgba(20,21,23,.95)'; roundRect(g,4,4,w-8,h-8,28); g.fill();
+  g.fillStyle='#ffd400'; for(let i=0;i<14;i++){ g.save(); g.beginPath(); roundRect(g,4,4,w-8,h-8,28); g.clip(); g.translate(i*60-20,0); g.rotate(-0.6); g.fillRect(0,-10,24,40); g.restore(); }
+  g.fillStyle='#fff'; g.font='400 58px Anton, Archivo, sans-serif'; g.fillText('GUESS THE SMELL',36,110);
+  g.fillStyle='#e8ff2e'; g.font='800 30px Archivo, sans-serif'; g.fillText(`SCORE ${score} / ${rounds}`,38,158);
+  g.fillStyle='#ddd'; g.font='500 30px Archivo, sans-serif'; wrapText(g,msg,38,214,w-76,40);
+  t.needsUpdate=true;
+}
+function makeBtn(label,bg,fg,x,y,action){
+  const tex=canvasTex(320,110,(g,w,h)=>{ g.fillStyle=bg; roundRect(g,4,4,w-8,h-8,26); g.fill(); g.fillStyle=fg; g.font='800 46px Archivo, sans-serif'; g.textAlign='center'; g.fillText(label,w/2,72); });
+  const m=new THREE.Mesh(new THREE.PlaneGeometry(0.22,0.075), new THREE.MeshBasicMaterial({map:tex,transparent:true}));
+  m.position.set(x,y,0.005); m.userData={kind:'btn',action,base:1}; panel.add(m); hitTargets.push(m); return m;
+}
+const btnBoot=makeBtn('🥾 BOOT','#5fd068','#111',-0.235,-0.3,()=>guess('boot'));
+const btnFart=makeBtn('💨 FART','#ff6a13','#fff',0,-0.3,()=>guess('fart'));
+const btnNext=makeBtn('▶ NEXT','#e8ff2e','#111',0.235,-0.3,()=>newRound());
+const btnCabin=makeBtn('🏗️ CABIN','#3a3d41','#fff',-0.12,-0.395,()=>toggleCabin());
+const btnShuffle=makeBtn('🕺 SHUFFLE','#b13cff','#fff',0.12,-0.395,()=>bootShuffle());
+function bootShuffle(){
+  say('gaz',"Lads! It's not dancing. It's VENTILATION! BOOT SHUFFLE!");
+  Object.values(ladObjs).forEach((X,k)=>{ setTimeout(()=>{ playAnim(X,'dance',false,9); X.stink.userData.burst=9; },k*200); });
+  [0,1.6,3.2,4.8,6.4].forEach(d=>setTimeout(()=>fart(2+Math.floor(Math.random()*3),true),d*1000));
+}
+drawPanel('Press NEXT for a mystery smell, then BOOT or FART. Or hit SHUFFLE and watch the lads air their boots.');
+
+const mystery=makeStink(160,0.6); mystery.position.set(0,0.9,-1.2); mystery.userData.rate=0; scene.add(mystery);
+const pick=a=>a[Math.floor(Math.random()*a.length)];
+function newRound(){
+  const culprit=pick(LADS); roundState={answer:Math.random()<0.5?'boot':'fart',culprit};
+  mystery.userData.rate=0.9; mystery.userData.burst=1.2; fart(2, true);
+  drawPanel('A mystery smell is drifting across the cabin… Sniff it. BOOT or FART?');
+  say('gaz',pick(["Contestant! Here it comes! Boot or fart?","Smell incoming! Nose ready, new lad.","Oh, that's a strong one. Final answer?"]));
+}
+function guess(g){
+  if(!roundState){ drawPanel('Press NEXT first. You can\'t guess a smell that isn\'t there.'); return; }
+  rounds++; const {answer,culprit}=roundState; const right=g===answer;
+  if(right) score++;
+  mystery.userData.rate=0;
+  const reveal = answer==='boot' ? `${culprit.name}'s boot` : `a ${culprit.name} special`;
+  drawPanel((right?'✅ CORRECT! ':'❌ WRONG! ')+`It was ${reveal}. `+(right?'Point to the new lad!':'You\'re on brews for the week.'));
+  squelch();
+  setTimeout(()=>say(culprit.id, answer==='boot'?culprit.boot:culprit.fart, true), 300);
+  if(answer==='fart') setTimeout(()=>fart(4),200);
+  const O=ladObjs[culprit.id]; O.stink.userData.burst=2.5;
+  if(right) Object.values(ladObjs).forEach((X,k)=>setTimeout(()=>playAnim(X,'cheer',true),k*120)); else playAnim(O,'boot',true);
+  roundState=null;
+}
+let cabinOn=true;
+function toggleCabin(){ cabinOn=!cabinOn; applyMode(); blip(); }
+function applyMode(){
+  const inAR = renderer.xr.isPresenting && xrMode==='ar';
+  cabin.visible = !inAR || cabinOn;
+  shadowCatcher.visible = inAR && !cabinOn;
+  scene.background = (inAR && !cabinOn) ? null : BG;
+}
+
+/* ===================================================================
+   TALKING: bubbles + voice (Claude voice in a Claude page, else browser speech)
+   =================================================================== */
+let claudeTTS=null;
+if(window.claude && window.claude.use) window.claude.use('tts').then(t=>{ if(t) claudeTTS=t; }).catch(()=>{});
+function say(id,text,noBubbleSound){
+  const O=ladObjs[id]; drawBubble(O.bubble,O.L.name,text); O.bubble.visible=true; O.bubbleT=6+text.length*0.04;
+  if(claudeTTS && !renderer.xr.isPresenting){ claudeTTS.speak([{text,voice:O.L.tts.voice,rate:O.L.tts.rate,language:'en'}]).catch(()=>{}); return; }
+  if('speechSynthesis' in window){
+    try{ speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(text); u.lang='en-GB'; u.rate=O.L.voice.rate; u.pitch=O.L.voice.pitch;
+      const v=speechSynthesis.getVoices().find(v=>/en-GB/i.test(v.lang)); if(v) u.voice=v; speechSynthesis.speak(u); }catch(e){}
+  }
+}
+
+/* ===================================================================
+   SOUND FX (synthesised)
+   =================================================================== */
+let ac=null; const actx=()=>{ ac ||= new (window.AudioContext||window.webkitAudioContext)(); if(ac.state==='suspended') ac.resume(); return ac; };
+function noiseBuf(a,d){ const b=a.createBuffer(1,a.sampleRate*d,a.sampleRate), x=b.getChannelData(0); for(let i=0;i<x.length;i++) x[i]=Math.random()*2-1; return b; }
+function fart(level=3,quiet=false){
+  const a=actx(), t=a.currentTime, dur=0.25+level*0.32, vol=quiet?0.25:0.5;
+  const out=a.createGain(); out.gain.value=0.0001; out.connect(a.destination);
+  out.gain.exponentialRampToValueAtTime(vol,t+0.03); out.gain.setValueAtTime(vol,t+dur*0.7); out.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  const o=a.createOscillator(); o.type='sawtooth'; const base=120-level*12;
+  o.frequency.setValueAtTime(base+30,t); o.frequency.exponentialRampToValueAtTime(Math.max(38,base-25),t+dur);
+  const l=a.createOscillator(), lg=a.createGain(); l.frequency.value=14+Math.random()*10+level*2; lg.gain.value=18+level*6; l.connect(lg); lg.connect(o.frequency);
+  const am=a.createGain(), l2=a.createOscillator(), lg2=a.createGain(); l2.frequency.value=22+Math.random()*12; lg2.gain.value=0.45; am.gain.value=0.55; l2.connect(lg2); lg2.connect(am.gain);
+  const lp=a.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=420+level*60; lp.Q.value=6;
+  o.connect(am); am.connect(lp); lp.connect(out);
+  const n=a.createBufferSource(); n.buffer=noiseBuf(a,dur); const bp=a.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=900; bp.Q.value=0.7;
+  const ng=a.createGain(); ng.gain.value=0.06+level*0.02; n.connect(bp); bp.connect(ng); ng.connect(out);
+  [o,l,l2,n].forEach(s=>{ s.start(t); s.stop(t+dur+0.05); });
+}
+function squelch(){ const a=actx(), t=a.currentTime, n=a.createBufferSource(); n.buffer=noiseBuf(a,0.35);
+  const bp=a.createBiquadFilter(); bp.type='bandpass'; bp.Q.value=9; bp.frequency.setValueAtTime(260,t); bp.frequency.exponentialRampToValueAtTime(1500,t+0.12); bp.frequency.exponentialRampToValueAtTime(320,t+0.3);
+  const g=a.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.9,t+0.02); g.gain.exponentialRampToValueAtTime(0.0001,t+0.33);
+  n.connect(bp); bp.connect(g); g.connect(a.destination); n.start(t); n.stop(t+0.36); }
+function blip(){ const a=actx(), t=a.currentTime, o=a.createOscillator(), g=a.createGain(); o.type='triangle'; o.frequency.setValueAtTime(520,t); o.frequency.exponentialRampToValueAtTime(260,t+0.12);
+  g.gain.setValueAtTime(0.15,t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.14); o.connect(g); g.connect(a.destination); o.start(t); o.stop(t+0.15); }
+
+/* ===================================================================
+   INTERACTION: one handler for mouse, controllers and hand pinch
+   =================================================================== */
+function activate(hit){
+  if(!hit) return;
+  const u=hit.object.userData;
+  if(u.kind==='btn'){ blip(); u.action(); hit.object.scale.setScalar(0.9); setTimeout(()=>hit.object.scale.setScalar(1),120); return; }
+  if(u.kind==='lad'){
+    const O=ladObjs[u.id]; const localY=O.root.worldToLocal(hit.point.clone()).y;
+    if(localY < 0.42){ // sniffed the boots
+      O.stink.userData.burst=2.5; fart(O.L.stink); playAnim(O,'boot',true);
+      const lvl=O.L.stink;
+      say(O.L.id, `Stink-O-Meter: ${lvl} out of 5! `+(lvl>=5?"Somebody open a window!":lvl>=4?"Proper ming, that.":"Mild. Like a PE bag in September."));
+    } else {
+      squelch();
+      const li=O.lineIdx++ % O.L.lines.length; const txt=O.L.lines[li];
+      say(O.L.id, txt);
+      if(/shuffl|ventilation/i.test(txt)) playAnim(O,'dance',false,7); else playAnim(O,'talk',true);
+    }
+  }
+}
+const ray=new THREE.Raycaster(); const ptr=new THREE.Vector2(); let mouseHover=null, downAt=null;
+renderer.domElement.addEventListener('pointerdown',e=>{ downAt=[e.clientX,e.clientY]; });
+renderer.domElement.addEventListener('pointerup',e=>{
+  if(!downAt || Math.hypot(e.clientX-downAt[0],e.clientY-downAt[1])>6) return; // it was a drag
+  ptr.set(e.clientX/innerWidth*2-1, -(e.clientY/innerHeight)*2+1); ray.setFromCamera(ptr,camera);
+  activate(ray.intersectObjects(hitTargets,false)[0]);
+});
+renderer.domElement.addEventListener('pointermove',e=>{
+  ptr.set(e.clientX/innerWidth*2-1, -(e.clientY/innerHeight)*2+1); ray.setFromCamera(ptr,camera);
+  mouseHover=ray.intersectObjects(hitTargets,false)[0]||null;
+  renderer.domElement.style.cursor=mouseHover?'pointer':'grab';
+});
+
+// XR controllers + hands
+const ctrlFactory=new XRControllerModelFactory(), handFactory=new XRHandModelFactory();
+const xrInputs=[]; const tmpM=new THREE.Matrix4();
+for(let i=0;i<2;i++){
+  const c=renderer.xr.getController(i);
+  const lineGeo=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0),new THREE.Vector3(0,0,-1)]);
+  const line=new THREE.Line(lineGeo,new THREE.LineBasicMaterial({color:'#e8ff2e',transparent:true,opacity:.8})); line.scale.z=4; c.add(line);
+  const dot=new THREE.Mesh(new THREE.SphereGeometry(0.012,10,8),new THREE.MeshBasicMaterial({color:'#e8ff2e'})); dot.visible=false; scene.add(dot);
+  c.addEventListener('select',()=>{ const h=castFrom(c); activate(h); });
+  scene.add(c);
+  const grip=renderer.xr.getControllerGrip(i); grip.add(ctrlFactory.createControllerModel(grip)); scene.add(grip);
+  const hand=renderer.xr.getHand(i); hand.add(handFactory.createHandModel(hand,'mesh')); scene.add(hand);
+  xrInputs.push({c,line,dot,hover:null});
+}
+function castFrom(c){
+  tmpM.identity().extractRotation(c.matrixWorld);
+  ray.ray.origin.setFromMatrixPosition(c.matrixWorld); ray.ray.direction.set(0,0,-1).applyMatrix4(tmpM);
+  return ray.intersectObjects(hitTargets,false)[0]||null;
+}
+
+/* ===================================================================
+   XR SESSIONS
+   =================================================================== */
+const btnAR=document.getElementById('btnAR'), btnVR=document.getElementById('btnVR'), st=document.getElementById('xrStatus');
+let xrMode=null;
+async function checkXR(){
+  if(!('xr' in navigator)){
+    st.textContent = window.isSecureContext ? 'No WebXR here. Open this page in the Quest browser to go life-size. (Desktop preview below.)' : 'WebXR needs HTTPS. Host this on an https:// address, then open it in the Quest browser.';
+    return;
+  }
+  let ar=false, vr=false;
+  try{ ar=await navigator.xr.isSessionSupported('immersive-ar'); }catch(e){}
+  try{ vr=await navigator.xr.isSessionSupported('immersive-vr'); }catch(e){}
+  btnAR.disabled=!ar; btnVR.disabled=!vr;
+  st.textContent = ar||vr ? 'Headset ready. Pick a mode.' : 'WebXR is here but immersive mode isn\'t allowed. If you\'re viewing inside Claude, open the hosted copy on your Pi in the Quest browser instead.';
+}
+checkXR();
+async function start(mode){
+  actx();
+  const opts={requiredFeatures:['local-floor'],optionalFeatures:['hand-tracking','bounded-floor']};
+  try{
+    const s=await navigator.xr.requestSession(mode==='ar'?'immersive-ar':'immersive-vr',opts);
+    xrMode=mode; cabinOn = mode==='vr';
+    await renderer.xr.setSession(s); applyMode();
+    document.getElementById('ui').style.display='none'; document.getElementById('tip').style.display='none';
+    s.addEventListener('end',()=>{ xrMode=null; cabinOn=true; applyMode(); document.getElementById('ui').style.display=''; document.getElementById('tip').style.display=''; });
+    setTimeout(()=>say('gaz',"Welcome to the cabin, new lad! Point at us. Pinch to poke. And mind the boots."),800);
+  }catch(e){ st.textContent='Couldn\'t start: '+(e.message||e); }
+}
+btnAR.onclick=()=>start('ar'); btnVR.onclick=()=>start('vr');
+document.getElementById('hide').onclick=()=>{ document.getElementById('ui').style.display='none'; document.getElementById('show').style.display='block'; };
+document.getElementById('show').onclick=()=>{ document.getElementById('ui').style.display=''; document.getElementById('show').style.display='none'; };
+
+/* ===================================================================
+   LOOP
+   =================================================================== */
+const clock=new THREE.Clock(); const camPos=new THREE.Vector3();
+renderer.setAnimationLoop(()=>{
+  const dt=Math.min(clock.getDelta(),0.05), t=clock.elapsedTime;
+  const cam=renderer.xr.isPresenting?renderer.xr.getCamera():camera; cam.getWorldPosition(camPos);
+
+  // hover from controllers (XR) or mouse (desktop)
+  const hovered=new Set();
+  if(renderer.xr.isPresenting){
+    xrInputs.forEach(x=>{ const h=castFrom(x.c); x.hover=h;
+      if(h){ x.dot.visible=true; x.dot.position.copy(h.point); x.line.scale.z=h.distance; hovered.add(h.object); } else { x.dot.visible=false; x.line.scale.z=4; } });
+  } else if(mouseHover) hovered.add(mouseHover.object);
+
+  Object.values(ladObjs).forEach(O=>{
+    const isH=[...hovered].some(o=>o.userData.id===O.L.id);
+    O.hover+= ((isH?1:0)-O.hover)*Math.min(1,dt*10);
+    O.ring.material.opacity=0.15+O.hover*0.7;
+    // idle sway for stand-ins
+    if(O.body.visible){ O.body.rotation.z=Math.sin(t*1.3+O.L.h*10)*0.015; O.body.position.y=Math.sin(t*2+O.L.w*7)*0.004; }
+    if(O.mixer) O.mixer.update(dt);
+    updateStink(O.stink,dt);
+    if(O.bubble.visible){ O.bubbleT-=dt; O.bubble.lookAt(camPos); if(O.bubbleT<=0) O.bubble.visible=false; }
+  });
+  hitTargets.forEach(m=>{ if(m.userData.kind==='btn') m.material.color.setScalar(hovered.has(m)?1.25:1); });
+  updateStink(mystery,dt,0);
+  renderer.render(scene,cam);
+});
+window.__cabin={ladObjs,bootShuffle,newRound,guess};
+addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+</script>
+</body>
+</html>
